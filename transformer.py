@@ -18,7 +18,7 @@ class MultiHeadAttention(nn.Module):
         self.d_v = d_v if d_v is not None else self.d_k
         self.W_O = nn.Linear((h * self.d_v), d_model)
 
-    def dot_prod_attention(self, Q, K, V):
+    def scaled_dot_product_attention(self, Q, K, V):
         """Scaled dot product attention."""
     pass
 
