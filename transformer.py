@@ -45,7 +45,7 @@ class MultiHeadAttention(nn.Module):
             KWi = self.W_K[i](K)
             VWi = self.W_V[i](V)
             heads.append(self.scaled_dot_product_attention(QWi, KWi, VWi))
-        cat = torch.concat(*heads)
+        cat = torch.concat(heads, dim=1)
         return self.W_O(cat)
 
 
@@ -57,3 +57,13 @@ class DecoderLayer(nn.Module):
 
 class Transformer(nn.Module):
     pass
+
+if __name__ == "__main__":
+    mh = MultiHeadAttention()
+    N = 100
+    Q = torch.rand((N, 512))
+    K = torch.rand((N, 512))
+    V = torch.rand((N, 512))
+    out = mh.multi_head(Q, K, V)
+    print(out)
+    breakpoint()
