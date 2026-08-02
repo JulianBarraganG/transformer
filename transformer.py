@@ -13,14 +13,15 @@ class FeedForward(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model: int = 512, h: int = 8, d_v: int | None = None) -> None:
-        super(MultiHeadAttention, self).__init__()
+        super().__init__()
         assert d_model % h == 0, f"d_model={d_model} must be divisible by h={h}"
         self.d_k = d_model // h
         self.d_v = d_v if d_v is not None else self.d_k
-        self.W_O = nn.Linear((h * self.d_v), d_model)
-        self.W_Q = nn.Linear(d_model, self.d_k)
-        self.W_K = nn.Linear(d_model, self.d_k)
-        self.W_V = nn.Linear(d_model, self.d_v)
+        self.h = h # number of heads in multi-head attention
+        self.W_O = nn.Linear((self.h * self.d_v), d_model)
+        self.W_Q = nn.ModuleList([nn.Linear(d_model, self.d_k) for _ in range(self.h)])
+        self.W_K = nn.ModuleList([nn.Linear(d_model, self.d_k) for _ in range(self.h)])
+        self.W_V = nn.ModuleList([nn.Linear(d_model, self.d_v) for _ in range(self.h)])
 
     def scaled_dot_product_attention(
         self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
@@ -37,7 +38,16 @@ class MultiHeadAttention(nn.Module):
     def multi_head(
         self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
     ) -> torch.Tensor:
-        pass
+        # Calculate h head_i = attention(QW^Q_i,...)
+        heads = []
+        for i in range(self.h):
+            QWi = self.W_Q[i](Q)
+            KWi = self.W_K[i](K)
+            VWi = self.W_V[i](V)
+            heads.append(self.scaled_dot_product_attention(QWi, KWi, VWi))
+        cat = torch.concat(*heads)
+        return self.W_O(cat)
+
 
 class EncoderLayer(nn.Module):
     pass
