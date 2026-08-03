@@ -1,7 +1,10 @@
 import torch
 from torch import nn
 from torch.nn.functional import softmax
+from typing import TypeAlias
 
+
+QueryKeyPair: TypeAlias = tuple[torch.Tensor, torch.Tensor]
 
 class PositionalEncoding(nn.Module):
     def __init__(self) -> None:
@@ -18,43 +21,63 @@ class FeedForward(nn.Module):
         self.layer_2 = nn.Linear(self.d_ff, self.d_model)
 
     def forward(self, X: torch.Tensor):
-        out = self.layer_1(x)
+        out = self.layer_1(X)
         out = self.relu(out)
         out = self.layer_2(out)
         return out
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int = 512, h: int = 8, d_v: int | None = None) -> None:
+    def __init__(
+        self,
+        h: int = 8,
+        d_model: int = 512,
+        d_v: int | None = None,
+        masked: bool = True,
+    ) -> None:
         super().__init__()
         assert d_model % h == 0, f"d_model={d_model} must be divisible by h={h}"
         self.d_k = d_model // h
         self.d_v = d_v if d_v is not None else self.d_k
         self.h = h # number of heads in multi-head attention
+        self.mask_inputs = masked
         self.W_O = nn.Linear((self.h * self.d_v), d_model)
         self.W_Q = nn.ModuleList([nn.Linear(d_model, self.d_k) for _ in range(self.h)])
         self.W_K = nn.ModuleList([nn.Linear(d_model, self.d_k) for _ in range(self.h)])
         self.W_V = nn.ModuleList([nn.Linear(d_model, self.d_v) for _ in range(self.h)])
 
+    def _mask_future_inputs(self, sm_input: torch.Tensor) -> torch.Tensor:
+        assert sm_input.shape[0] == sm_input.shape[1], "Expected square matrix input"
+        if sm_input.shape[0] % 2 != 0:
+            print(f"Expected shape divisible by two, got shape {sm_input.shape[0]}.")
+        n_half = sm_input.shape[0] // 2
+        masked_indices = torch.tensor(
+            [(i, j) for i in range(1, n_half) for j in range(1, n_half)]
+        )
+        return sm_input.masked_fill(masked_indices, -torch.inf)
+
     def scaled_dot_product_attention(
-        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
+        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, mask: bool
     ) -> torch.Tensor:
         """Scaled dot product attention."""
         assert Q.shape[1] == K.shape[1] == self.d_k,(
             f"Expected Q and K to have {self.d_k} i.e. d_k columns"
         )
         assert V.shape[1] == self.d_v, f"Expected V to have {self.d_v} i.e. d_v columns"
-        scaled_dot_prods = softmax(torch.matmul(Q, torch.t(K)) / self.d_k)
+        softmax_input = torch.matmul(Q, torch.t(K)) / self.d_k
+        if self.mask_inputs:
+            softmax_input = self._mask_future_inputs(softmax_input)
+        scaled_dot_prods = softmax(softmax_input)
 
         return torch.matmul(scaled_dot_prods, V)
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: torch.Tensor, mask: bool = True) -> torch.Tensor:
         # Calculate h head_i = attention(QW^Q_i,...)
         heads = []
         for i in range(self.h):
             Qi = self.W_Q[i](X)
             Ki = self.W_K[i](X)
             Vi = self.W_V[i](X)
-            heads.append(self.scaled_dot_product_attention(Qi, Ki, Vi))
+            heads.append(self.scaled_dot_product_attention(Qi, Ki, Vi, mask))
         cat = torch.concat(heads, dim=1)
         return self.W_O(cat)
 
@@ -68,24 +91,48 @@ class EncoderLayer(nn.Module):
         d_v: int | None = None,
     ) -> None:
         super().__init__()
-        self.mha= MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
+        self.mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_mha = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
 
-        def forward(self, X: torch.Tensor) -> None:
-            # Sub-layer one (multi-head attention)
-            Z = self.mha(X)
-            Z = self.layer_norm_mha(X + Z) # residual after X
-            # Sub-layer two (feed-forward network)
-            R = self.ff(Z)
-            R = self.layer_norm_ff(Z + R) # residual after Z
-            return R
+    def forward(self, X: torch.Tensor) -> None:
+        # Sub-layer one (multi-head attention)
+        Z = self.mha(X)
+        Z = self.layer_norm_mha(X + Z) # residual after X
+        # Sub-layer two (feed-forward network)
+        R = self.ff(Z)
+        R = self.layer_norm_ff(Z + R) # residual after Z
+        return R
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        h: int = 8,
+        d_model: int = 512,
+        d_ff: int = 2048,
+        d_v: int | None = None,
+    ) -> None:
         super().__init__()
+        self.mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
+        self.masked_mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v, masked=True)
+        self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
+        self.layer_norm_mha = nn.LayerNorm(d_model)
+        self.layer_norm_masked_mhas = nn.LayerNorm(d_model)
+        self.layer_norm_ff = nn.LayerNorm(d_model)
+
+    def forward(self, X: torch.Tensor, encoder_QK: QueryKeyPair) -> None:
+        # Sub-layer one (multi-head attention)
+        Z = self.mha(X)
+        Z = self.layer_norm_mha(X + Z) # residual after X
+        # Sub-layer two (masked multi-head attention)
+        
+        # Sub-layer three (feed-forward network)
+        R = self.ff(Z)
+        R = self.layer_norm_ff(Z + R) # residual after Z
+        return R
+
 
 
 class Transformer(nn.Module):
