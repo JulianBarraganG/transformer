@@ -1,18 +1,18 @@
 import torch
 from torch import nn
 from torch.nn.functional import softmax
-from typing import TypeAlias
 
-
-QueryKeyPair: TypeAlias = tuple[torch.Tensor, torch.Tensor]
+QueryKeyPair: type = tuple[torch.Tensor, torch.Tensor]
 
 class PositionalEncoding(nn.Module):
+    # probably not an nn.Module
     def __init__(self) -> None:
         super().__init__()
+        raise NotImplementedError()
 
 class FeedForward(nn.Module):
     """Position wise feed forward network"""
-    def __init__(self, d_model: int = 512, d_ff: int = 2048) -> None:
+    def __init__(self, d_model: int, d_ff: int) -> None:
         super().__init__()
         self.d_model = d_model
         self.d_ff = d_ff
@@ -26,13 +26,10 @@ class FeedForward(nn.Module):
         out = self.layer_2(out)
         return out
 
+
 class MultiHeadAttention(nn.Module):
     def __init__(
-        self,
-        h: int = 8,
-        d_model: int = 512,
-        d_v: int | None = None,
-        masked: bool = True,
+        self, h: int, d_model: int, d_v: int | None, masked: bool = True,
     ) -> None:
         super().__init__()
         assert d_model % h == 0, f"d_model={d_model} must be divisible by h={h}"
@@ -56,7 +53,7 @@ class MultiHeadAttention(nn.Module):
         return sm_input.masked_fill(masked_indices, -torch.inf)
 
     def scaled_dot_product_attention(
-        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, mask: bool
+        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
     ) -> torch.Tensor:
         """Scaled dot product attention."""
         assert Q.shape[1] == K.shape[1] == self.d_k,(
@@ -70,36 +67,31 @@ class MultiHeadAttention(nn.Module):
 
         return torch.matmul(scaled_dot_prods, V)
 
-    def forward(self, X: torch.Tensor, mask: bool = True) -> torch.Tensor:
+    def forward(self, X: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
         # Calculate h head_i = attention(QW^Q_i,...)
         heads = []
+        key_val_source = X if memory is not None else memory
         for i in range(self.h):
             Qi = self.W_Q[i](X)
-            Ki = self.W_K[i](X)
-            Vi = self.W_V[i](X)
-            heads.append(self.scaled_dot_product_attention(Qi, Ki, Vi, mask))
+            Ki = self.W_K[i](key_val_source)
+            Vi = self.W_V[i](key_val_source)
+            heads.append(self.scaled_dot_product_attention(Qi, Ki, Vi))
         cat = torch.concat(heads, dim=1)
         return self.W_O(cat)
 
 
 class EncoderLayer(nn.Module):
-    def __init__(
-        self,
-        h: int = 8,
-        d_model: int = 512,
-        d_ff: int = 2048,
-        d_v: int | None = None,
-    ) -> None:
+    def __init__(self, h: int, d_model: int, d_ff: int, d_v: int | None) -> None:
         super().__init__()
-        self.mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
+        self.self_attention = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
-        self.layer_norm_mha = nn.LayerNorm(d_model)
+        self.layer_norm_self = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
 
     def forward(self, X: torch.Tensor) -> None:
-        # Sub-layer one (multi-head attention)
-        Z = self.mha(X)
-        Z = self.layer_norm_mha(X + Z) # residual after X
+        # Sub-layer one (self-attention)
+        Z = self.self_attention(X)
+        Z = self.layer_norm_self(X + Z) # residual after X
         # Sub-layer two (feed-forward network)
         R = self.ff(Z)
         R = self.layer_norm_ff(Z + R) # residual after Z
@@ -107,32 +99,28 @@ class EncoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(
-        self,
-        h: int = 8,
-        d_model: int = 512,
-        d_ff: int = 2048,
-        d_v: int | None = None,
-    ) -> None:
+    def __init__(self, h: int, d_model: int, d_ff: int, d_v: int | None) -> None:
         super().__init__()
-        self.mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
-        self.masked_mha = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v, masked=True)
+        self.encdec_attention = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v)
+        self.self_attention = MultiHeadAttention(d_model=d_model, h=h, d_v=d_v, masked=True)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
-        self.layer_norm_mha = nn.LayerNorm(d_model)
-        self.layer_norm_masked_mhas = nn.LayerNorm(d_model)
+        self.layer_norm_encdec = nn.LayerNorm(d_model)
+        self.layer_norm_self = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
 
-    def forward(self, X: torch.Tensor, encoder_QK: QueryKeyPair) -> None:
-        # Sub-layer one (multi-head attention)
-        Z = self.mha(X)
-        Z = self.layer_norm_mha(X + Z) # residual after X
-        # Sub-layer two (masked multi-head attention)
-        
+    def forward(self, X: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
+        """Forward pass for the Decoder layer. The parameter `memory` referes to the
+        output of the last Encoder layer in the Encoder stack."""
+        # Sub-layer one (masked self-attention)
+        Z = self.self_attention(X)
+        Z = self.layer_norm_self(X + Z) # residual after X
+        # Sub-layer two (encoder-decoder attention)
+        Y = self.encdec_attention(X, memory=memory)
+        Y = self.layer_norm_encdec(Z + Y)
         # Sub-layer three (feed-forward network)
-        R = self.ff(Z)
-        R = self.layer_norm_ff(Z + R) # residual after Z
+        R = self.ff(Y)
+        R = self.layer_norm_ff(Y + R) # residual after Z
         return R
-
 
 
 class Transformer(nn.Module):
@@ -144,10 +132,31 @@ class Transformer(nn.Module):
         d_ff: int = 2048,
         d_v: int | None = None,
     ) -> None:
+        """NOT IMPLEMENTED. What's there is just blueprint to keep grid in head,
+        albeit wrong atm."""
         super().__init__()
         self.encoder_layers = nn.ModuleList(
-            [EncoderLayer() for _ in range(N)]
+            [
+                EncoderLayer(h=h, d_model=d_model, d_ff=d_ff, d_v=d_v)
+                for _ in range(N)
+            ]
         )
         self.decoder_layers = nn.ModuleList(
-            [DecoderLayer() for _ in range(N)]
+            [
+                DecoderLayer(h=h, d_model=d_model, d_ff=d_ff, d_v=d_v)
+                for _ in range(N)
+            ]
         )
+
+        def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+            # embed and positionally encode X and Y
+            # missing ...
+            # Pass through encoder stack
+            for enc in self.encoder_layers:
+                X = enc(X)
+            memory = X.clone().detach() # TODO: is this unnecessary?
+            # Pass through decoder stack
+            for dec in self.decoder_layers:
+                Y = dec(Y, memory)
+
+            return Y # PLACEHOLDER
