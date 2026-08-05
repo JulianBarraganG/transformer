@@ -43,14 +43,18 @@ class MultiHeadAttention(nn.Module):
         self.W_V = nn.ModuleList([nn.Linear(d_model, self.d_v) for _ in range(self.h)])
 
     def _mask_future_inputs(self, sm_input: torch.Tensor) -> torch.Tensor:
-        assert sm_input.shape[0] == sm_input.shape[1], "Expected square matrix input"
-        if sm_input.shape[0] % 2 != 0:
-            print(f"Expected shape divisible by two, got shape {sm_input.shape[0]}.")
-        n_half = sm_input.shape[0] // 2
-        masked_indices = torch.tensor(
-            [(i, j) for i in range(1, n_half) for j in range(1, n_half)]
+        assert sm_input.shape[0] == sm_input.shape[1],(
+            f"Expected square tensor matrix input, got ({in_shape[0], in_shape[1]})."
         )
-        return sm_input.masked_fill(masked_indices, -torch.inf)
+        seq_len = sm_input.shape[0]
+        mask = torch.full(sm_input.shape, False)
+        for i in range(seq_len):
+            for j in range(seq_len):
+                if j > i:
+                    mask[i, j] = True
+                    # TODO: might be a faster way
+
+        return sm_input.masked_fill(mask, -torch.inf)
 
     def scaled_dot_product_attention(
         self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
@@ -63,14 +67,14 @@ class MultiHeadAttention(nn.Module):
         softmax_input = torch.matmul(Q, torch.t(K)) / self.d_k
         if self.mask_inputs:
             softmax_input = self._mask_future_inputs(softmax_input)
-        scaled_dot_prods = softmax(softmax_input)
+        scaled_dot_prods = softmax(softmax_input, dim=1)
 
         return torch.matmul(scaled_dot_prods, V)
 
     def forward(self, X: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
         # Calculate h head_i = attention(QW^Q_i,...)
         heads = []
-        key_val_source = X if memory is not None else memory
+        key_val_source = X if memory is None else memory
         for i in range(self.h):
             Qi = self.W_Q[i](X)
             Ki = self.W_K[i](key_val_source)
