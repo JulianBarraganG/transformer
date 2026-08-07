@@ -1,14 +1,36 @@
 import torch
+import math
 from torch import nn
 from torch.nn.functional import softmax
 
-QueryKeyPair: type = tuple[torch.Tensor, torch.Tensor]
+
 
 class PositionalEncoding(nn.Module):
-    # probably not an nn.Module
-    def __init__(self) -> None:
+    pe: torch.Tensor
+    def __init__(self, d_model: int, max_seq_len: int) -> None:
         super().__init__()
-        raise NotImplementedError()
+        self.d_model = d_model
+        self.max_seq_len = max_seq_len
+        # Calculate the PE matrix
+        pe = torch.empty((self.max_seq_len, self.d_model), requires_grad=False)
+        pos = torch.arange(0, self.max_seq_len).unsqueeze(1) # shape (max_seq_len, 1)
+        two_i = torch.arange(0, self.d_model, 2) # shape (d_model/2,)
+        # exp of log 10000^(-2i / d_model) avoids overflow
+        div_term = torch.exp(-(two_i / d_model) * math.log(10000)) # shape (d_model/2,)
+        pe[:, 0::2] = torch.sin(pos * div_term)
+        pe[:, 1::2] = torch.cos(pos * div_term[: self.d_model // 2])
+        # the integer div by 2 is a bespoke floor for correct slice in uneven d_model case
+
+        self.register_buffer("pe", pe) # goes to GPU without being model param/trained on
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        seq_len = X.size(-2) # either (batch, N, dim) or (N, dim)
+        assert seq_len <= self.max_seq_len, (
+            f"Sequence too long: {seq_len} > {self.max_seq_len} = max sequence length"
+        )
+
+        return self.pe[:seq_len]
+
 
 class FeedForward(nn.Module):
     """Position wise feed forward network"""
