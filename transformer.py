@@ -1,8 +1,8 @@
-import torch
 import math
+
+import torch
 from torch import nn
 from torch.nn.functional import softmax
-
 
 
 class PositionalEncoding(nn.Module):
