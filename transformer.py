@@ -1,6 +1,7 @@
 import math
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -22,7 +23,7 @@ class PositionalEncoding(nn.Module):
         self.d_model = d_model
         self.max_seq_len = max_seq_len
         # Calculate the PE matrix
-        pe = torch.empty((self.max_seq_len, self.d_model), requires_grad=False)
+        pe = torch.empty((self.max_seq_len, self.d_model))
         pos = torch.arange(0, self.max_seq_len).unsqueeze(1) # shape (max_seq_len, 1)
         two_i = torch.arange(0, self.d_model, 2) # shape (d_model/2,)
         progression_range = 10000
@@ -54,15 +55,20 @@ class FeedForward(nn.Module):
         self.layer_2 = nn.Linear(self.d_ff, self.d_model)
 
     def forward(self, X: torch.Tensor):
-        out = self.layer_1(X)
-        out = self.relu(out)
-        out = self.layer_2(out)
-        return out
+        X = self.layer_1(X)
+        X = self.relu(X)
+        X = self.layer_2(X)
+        return X
 
 
 class MultiHeadAttention(nn.Module):
     def __init__(
-        self, h: int, d_model: int, d_k: int, d_v: int | None, masked: bool = False,
+        self,
+        h: int,
+        d_model: int,
+        d_k: int,
+        d_v: int | None,
+        masked: bool = False,
     ) -> None:
         super().__init__()
         self.d_k = d_k
@@ -97,23 +103,24 @@ class MultiHeadAttention(nn.Module):
             f"Expected Q and K to have last dim {self.d_k} i.e. d_k"
         )
         assert V.shape[-1] == self.d_v, f"Expected V to have last dim {self.d_v} i.e. d_v"
+
         softmax_input = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if self.mask_inputs:
             softmax_input = self._mask_future_inputs(softmax_input)
-        scaled_dot_prods = nn.functional.softmax(softmax_input, dim=-1)
+        attention = F.softmax(softmax_input, dim=-1)
 
-        return torch.matmul(scaled_dot_prods, V)
+        return torch.matmul(attention, V)
 
     def forward(self, X: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
         # Calculate h head_i = attention(QW^Q_i,...)
         key_val_source = X if memory is None else memory
-        seq_q = X.shape[0]
-        seq_kv = key_val_source.shape[0]
-        Q = self.W_Q(X).reshape(seq_q, self.h, self.d_k).transpose(0, 1) # (h, n, d_k)
-        K = self.W_K(key_val_source).reshape(seq_kv, self.h, self.d_k).transpose(0, 1)
-        V = self.W_V(key_val_source).reshape(seq_kv, self.h, self.d_v).transpose(0, 1)
-        heads = self.scaled_dot_product_attention(Q, K, V) # heads (h, seq_q, d_v)
-        cat = heads.transpose(0, 1).reshape(seq_q, self.d_v * self.h)
+        # reshape to (*, h, n, d_k)
+        Q = self.W_Q(X).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2) 
+        K = self.W_K(key_val_source).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2)
+        V = self.W_V(key_val_source).unflatten(-1, (self.h, self.d_v)).transpose(-3, -2)
+        heads = self.scaled_dot_product_attention(Q, K, V) # heads shape (*, h, n, d_v)
+        cat = heads.transpose(-3, -2).flatten(-2) # merge last 2 axes; shape (*, n, h*d_v)
+
         return self.W_O(cat)
 
 
@@ -128,20 +135,22 @@ class EncoderLayer(nn.Module):
         p_drop: float | None = 0.1,
     ) -> None:
         super().__init__()
-        self.self_attention = MultiHeadAttention(d_model=d_model, h=h, d_k=d_k, d_v=d_v)
+        self.self_attention = MultiHeadAttention(
+            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
+        )
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_self = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
-        self.p_drop = p_drop
+        self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         # Sub-layer one (self-attention)
         Z = self.self_attention(X)
-       
+        Z = self.dropout(Z) if self.dropout is not None else Z
         Z = self.layer_norm_self(X + Z) # residual after X
         # Sub-layer two (feed-forward network)
         R = self.ff(Z)
-       
+        R = self.dropout(R) if self.dropout is not None else R
         R = self.layer_norm_ff(Z + R) # residual after Z
         return R
 
@@ -157,30 +166,32 @@ class DecoderLayer(nn.Module):
         p_drop: float | None = 0.1,
     ) -> None:
         super().__init__()
-        self.encdec_attention = MultiHeadAttention(d_model=d_model, h=h, d_k=d_k, d_v=d_v)
+        self.encdec_attention = MultiHeadAttention(
+            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
+        )
         self.self_attention = MultiHeadAttention(
-            d_model=d_model, h=h, d_k=d_k, d_v=d_v, masked=True,
+            h=h, d_model=d_model, d_k=d_k, d_v=d_v,  masked=True,
         )
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_encdec = nn.LayerNorm(d_model)
         self.layer_norm_self = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
-        self.p_drop = p_drop
+        self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
 
     def forward(self, X: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
         """Forward pass for the Decoder layer. The parameter `memory` referes to the
         output of the last Encoder layer in the Encoder stack."""
         # Sub-layer one (masked self-attention)
         Z = self.self_attention(X)
-       
+        Z = self.dropout(Z) if self.dropout is not None else Z
         Z = self.layer_norm_self(X + Z) # residual after X
         # Sub-layer two (encoder-decoder attention)
         Y = self.encdec_attention(Z, memory=memory)
-       
+        Y = self.dropout(Y) if self.dropout is not None else Y
         Y = self.layer_norm_encdec(Z + Y)
         # Sub-layer three (feed-forward network)
         R = self.ff(Y)
-       
+        R = self.dropout(R) if self.dropout is not None else R
         R = self.layer_norm_ff(Y + R) # residual after Z
         return R
 
@@ -190,6 +201,7 @@ class Transformer(nn.Module):
         self, 
         max_seq_len: int,
         vocab_size: int,
+        padding_idx: int,
         h: int = 8,
         N: int = 6,
         d_ff: int = 2048,
@@ -198,11 +210,11 @@ class Transformer(nn.Module):
         d_v: int | None = None,
         p_drop: float | None = 0.1,
     ) -> None:
-        """NOT IMPLEMENTED. What's there is just blueprint to keep grid in head,
-        albeit wrong atm."""
+        """Transformer Neural Network"""
         super().__init__()
+        self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
         self.positional_encoding = PositionalEncoding(max_seq_len, d_model)
-        self.embedding = Embedding(vocab_size, d_model)
+        self.embedding = Embedding(vocab_size, d_model, pad_idx=padding_idx)
         self.output_head = nn.Linear(d_model, vocab_size, bias=False)
         # Tie the weights for embedding and output head as they do in paper
         self.output_head.weight = self.embedding.emb_layer.weight
@@ -219,6 +231,18 @@ class Transformer(nn.Module):
             ]
         )
         self.p_drop = p_drop
+        self.d_model = d_model
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+        # init shared weight tensor post others
+        nn.init.normal_(self.embedding.emb_layer.weight, mean=0.0, std=self.d_model**-0.5)
+
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
         # Embed and positionally encode X
@@ -228,8 +252,9 @@ class Transformer(nn.Module):
         Y = self.embedding(Y)
         Y = self.positional_encoding(Y)
         # droupout the sum of embedding and pos enc
-       
-       
+        if self.dropout is not None:
+            X = self.dropout(X)
+            Y = self.dropout(Y)
         # Pass through encoder stack
         for enc in self.encoder_layers:
             X = enc(X)
@@ -242,11 +267,21 @@ class Transformer(nn.Module):
         return Y # Predicted next-token distribution raw logits
 
 if __name__ == "__main__":
-    m = Transformer(128, 1000)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    m = Transformer(128, 1000, 10)
     print(m.embedding.emb_layer.weight is m.output_head.weight)
     print(sum(p.numel() for p in m.parameters()))
     print("test forward")
-    X = torch.randint(0, 1000, (128,)) # rand ids in vocab size, 128 of these
-    Y = torch.randint(0, 1000, (128,))
+    batch_size, seq_len, vocab_size = 32, 128, 1000
+    # rand token ids: (batch, seq) -> embeds to (batch, seq, d_model)
+    X = torch.randint(0, vocab_size, (batch_size, seq_len))
+    Y = torch.randint(0, vocab_size, (batch_size, seq_len))
 
-    print(f"Result: {m(X, Y)}")
+    out = m(X, Y)
+    print(f"Result shape: {tuple(out.shape)}") # expect (32, 128, 1000)
+    m.eval()  # dropout off, else the number is noisy
+    with torch.no_grad():
+        logits = m(X, Y)
+        labels = torch.randint(0, vocab_size, (batch_size, seq_len))
+        loss = F.cross_entropy(logits.flatten(0, 1), labels.flatten())
+    print(f"initial loss {loss.item():.3f} (want ~{math.log(vocab_size):.3f})")
