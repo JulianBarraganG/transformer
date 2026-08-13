@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch import Tensor
 
 
 class Embedding(nn.Module):
@@ -12,12 +13,12 @@ class Embedding(nn.Module):
         self.d_model = d_model
         self.padding_idx = pad_idx
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: Tensor) -> Tensor:
         # TODO: consider different inputs than torch tensors
         return self.emb_layer(X) * math.sqrt(self.d_model)
 
 class PositionalEncoding(nn.Module):
-    pe: torch.Tensor
+    pe: Tensor
     def __init__(self, max_seq_len: int, d_model: int) -> None:
         super().__init__()
         self.d_model = d_model
@@ -35,7 +36,7 @@ class PositionalEncoding(nn.Module):
 
         self.register_buffer("pe", pe) # goes to GPU without being model param/trained on
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: Tensor) -> Tensor:
         seq_len = X.size(-2) # either (batch, N, dim) or (N, dim)
         assert seq_len <= self.max_seq_len, (
             f"Sequence too long: {seq_len} > {self.max_seq_len} = max sequence length"
@@ -54,7 +55,7 @@ class FeedForward(nn.Module):
         self.relu = nn.ReLU()
         self.layer_2 = nn.Linear(self.d_ff, self.d_model)
 
-    def forward(self, X: torch.Tensor):
+    def forward(self, X: Tensor):
         X = self.layer_1(X)
         X = self.relu(X)
         X = self.layer_2(X)
@@ -68,57 +69,45 @@ class MultiHeadAttention(nn.Module):
         d_model: int,
         d_k: int,
         d_v: int | None,
-        masked: bool = False,
     ) -> None:
         super().__init__()
         self.d_k = d_k
         self.d_v = d_v if d_v is not None else d_k
         self.h = h # number of heads in multi-head attention
-        self.mask_inputs = masked
         self.W_O = nn.Linear((self.d_v * h), d_model)
         self.W_Q = nn.Linear(d_model, d_k * h)
         self.W_K = nn.Linear(d_model, d_k * h)
         self.W_V = nn.Linear(d_model, (self.d_v * h))
 
-    def _mask_future_inputs(self, sm_input: torch.Tensor) -> torch.Tensor:
-        assert sm_input.shape[-2] == sm_input.shape[-1], (
-            "Expected square score matrix, got "
-            f"({sm_input.shape[-2]}, {sm_input.shape[-1]})."
-        )
-        seq_len = sm_input.shape[-1]
-        mask = torch.full((seq_len, seq_len), False, device=sm_input.device)
-        for i in range(seq_len):
-            for j in range(seq_len):
-                if j > i:
-                    mask[i, j] = True
-                    # TODO: rewrite with torch.triu
-
-        return sm_input.masked_fill(mask, -torch.inf)
-
     def scaled_dot_product_attention(
-        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor
-    ) -> torch.Tensor:
-        """Scaled dot product attention."""
+        self, Q: Tensor, K: Tensor, V: Tensor, mask: Tensor | None = None
+    ) -> Tensor:
+        """Scaled dot product attention. `mask` is True where attention is forbidden."""
         assert Q.shape[-1] == K.shape[-1] == self.d_k,(
             f"Expected Q and K to have last dim {self.d_k} i.e. d_k"
         )
         assert V.shape[-1] == self.d_v, f"Expected V to have last dim {self.d_v} i.e. d_v"
 
         softmax_input = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
-        if self.mask_inputs:
-            softmax_input = self._mask_future_inputs(softmax_input)
+        if mask is not None:
+            softmax_input = softmax_input.masked_fill(mask, -torch.inf)
         attention = F.softmax(softmax_input, dim=-1)
 
         return torch.matmul(attention, V)
 
-    def forward(self, X: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        X: Tensor,
+        memory: Tensor | None = None,
+        mask: Tensor | None = None
+    ) -> Tensor:
         # Calculate h head_i = attention(QW^Q_i,...)
         key_val_source = X if memory is None else memory
         # reshape to (*, h, n, d_k)
         Q = self.W_Q(X).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2) 
         K = self.W_K(key_val_source).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2)
         V = self.W_V(key_val_source).unflatten(-1, (self.h, self.d_v)).transpose(-3, -2)
-        heads = self.scaled_dot_product_attention(Q, K, V) # heads shape (*, h, n, d_v)
+        heads = self.scaled_dot_product_attention(Q, K, V, mask) # heads shape (*, h, n, d_v)
         cat = heads.transpose(-3, -2).flatten(-2) # merge last 2 axes; shape (*, n, h*d_v)
 
         return self.W_O(cat)
@@ -143,7 +132,7 @@ class EncoderLayer(nn.Module):
         self.layer_norm_ff = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: Tensor) -> Tensor:
         # Sub-layer one (self-attention)
         Z = self.self_attention(X)
         Z = self.dropout(Z) if self.dropout is not None else Z
@@ -170,7 +159,7 @@ class DecoderLayer(nn.Module):
             h=h, d_model=d_model, d_k=d_k, d_v=d_v,
         )
         self.self_attention = MultiHeadAttention(
-            h=h, d_model=d_model, d_k=d_k, d_v=d_v,  masked=True,
+            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
         )
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_encdec = nn.LayerNorm(d_model)
@@ -178,14 +167,14 @@ class DecoderLayer(nn.Module):
         self.layer_norm_ff = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
 
-    def forward(self, X: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: Tensor, memory: Tensor, mask: Tensor | None) -> Tensor:
         """Forward pass for the Decoder layer. The parameter `memory` referes to the
         output of the last Encoder layer in the Encoder stack."""
-        # Sub-layer one (masked self-attention)
-        Z = self.self_attention(X)
+        # Sub-layer one (masked self-attention) -- causality lives here
+        Z = self.self_attention(X, mask=mask)
         Z = self.dropout(Z) if self.dropout is not None else Z
         Z = self.layer_norm_self(X + Z) # residual after X
-        # Sub-layer two (encoder-decoder attention)
+        # Sub-layer two (encoder-decoder attention) -- unmasked, decoder sees all of source
         Y = self.encdec_attention(Z, memory=memory)
         Y = self.dropout(Y) if self.dropout is not None else Y
         Y = self.layer_norm_encdec(Z + Y)
@@ -193,10 +182,12 @@ class DecoderLayer(nn.Module):
         R = self.ff(Y)
         R = self.dropout(R) if self.dropout is not None else R
         R = self.layer_norm_ff(Y + R) # residual after Z
+
         return R
 
 
 class Transformer(nn.Module):
+    causal_mask: Tensor
     def __init__(
         self, 
         max_seq_len: int,
@@ -232,6 +223,11 @@ class Transformer(nn.Module):
         )
         self.p_drop = p_drop
         self.d_model = d_model
+        self.register_buffer(
+            "causal_mask",
+            torch.ones(max_seq_len, max_seq_len, dtype=torch.bool).triu(1),
+            persistent=False,
+        )
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -244,7 +240,7 @@ class Transformer(nn.Module):
         nn.init.normal_(self.embedding.emb_layer.weight, mean=0.0, std=self.d_model**-0.5)
 
 
-    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: Tensor, Y: Tensor) -> Tensor:
         # Embed and positionally encode X
         X = self.embedding(X)
         X = self.positional_encoding(X)
@@ -258,9 +254,11 @@ class Transformer(nn.Module):
         # Pass through encoder stack
         for enc in self.encoder_layers:
             X = enc(X)
-        # Pass through decoder stack
+        # Pass through decoder stack; slice the cached mask to this batch's target length
+        seq_len = Y.shape[-2]
+        mask = self.causal_mask[:seq_len, :seq_len]
         for dec in self.decoder_layers:
-            Y = dec(Y, X)
+            Y = dec(Y, X, mask)
         # Tied weights from embedding used for output head (transposed)
         Y = self.output_head(Y)
 
