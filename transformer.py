@@ -124,9 +124,7 @@ class EncoderLayer(nn.Module):
         p_drop: float | None = 0.1,
     ) -> None:
         super().__init__()
-        self.self_attention = MultiHeadAttention(
-            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
-        )
+        self.self_attention = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_self = nn.LayerNorm(d_model)
         self.layer_norm_ff = nn.LayerNorm(d_model)
@@ -155,12 +153,8 @@ class DecoderLayer(nn.Module):
         p_drop: float | None = 0.1,
     ) -> None:
         super().__init__()
-        self.encdec_attention = MultiHeadAttention(
-            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
-        )
-        self.self_attention = MultiHeadAttention(
-            h=h, d_model=d_model, d_k=d_k, d_v=d_v,
-        )
+        self.encdec_attention = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
+        self.self_attention = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_encdec = nn.LayerNorm(d_model)
         self.layer_norm_self = nn.LayerNorm(d_model)
