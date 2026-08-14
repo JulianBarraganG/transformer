@@ -90,7 +90,7 @@ class MultiHeadAttention(nn.Module):
 
         softmax_input = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if mask is not None:
-            softmax_input = softmax_input.masked_fill(mask, -torch.inf)
+            softmax_input.masked_fill_(mask, -torch.finfo(softmax_input.dtype).min)
         attention = F.softmax(softmax_input, dim=-1)
 
         return torch.matmul(attention, V)
