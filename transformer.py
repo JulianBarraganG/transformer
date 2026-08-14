@@ -130,9 +130,9 @@ class EncoderLayer(nn.Module):
         self.layer_norm_ff = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(p_drop) if p_drop is not None else None
 
-    def forward(self, X: Tensor) -> Tensor:
+    def forward(self, X: Tensor, pad_mask: Tensor) -> Tensor:
         # Sub-layer one (self-attention)
-        Z = self.self_attention(X)
+        Z = self.self_attention(X, pad_mask)
         Z = self.dropout(Z) if self.dropout is not None else Z
         Z = self.layer_norm_self(X + Z) # residual after X
         # Sub-layer two (feed-forward network)
@@ -235,6 +235,11 @@ class Transformer(nn.Module):
 
 
     def forward(self, X: Tensor, Y: Tensor) -> Tensor:
+        # Calculate the combined causal and pad mask
+        tgt_len = Y.shape[-2]
+        # TODO: Mask tokens between seq len and batch_max_seq_len
+        pad_mask = None # NOT IMPLEMENTED
+        causal_mask = self.causal_mask[:tgt_len, :tgt_len]
         # Embed and positionally encode X
         X = self.embedding(X)
         X = self.positional_encoding(X)
@@ -247,12 +252,10 @@ class Transformer(nn.Module):
             Y = self.dropout(Y)
         # Pass through encoder stack
         for enc in self.encoder_layers:
-            X = enc(X)
+            X = enc(X, pad_mask)
         # Pass through decoder stack; slice the cached mask to this batch's target length
-        seq_len = Y.shape[-2]
-        mask = self.causal_mask[:seq_len, :seq_len]
         for dec in self.decoder_layers:
-            Y = dec(Y, X, mask)
+            Y = dec(Y, X, causal_mask)
         # Tied weights from embedding used for output head (transposed)
         Y = self.output_head(Y)
 

@@ -92,7 +92,7 @@ A1/B1 first because nothing downstream is measurable until initial loss reads ~6
       in a `register_buffer` at `max_seq_len` sliced to `[:n, :n]`, not recomputed. Same
       reasoning as the `pe` buffer — the instinct was already there once.
 
-- [ ] **C3. `-torch.inf` will bite in mixed precision** (`transformer.py:96`)
+- [x] **C3. `-torch.inf` will bite in mixed precision** (`transformer.py:96`)
       Fine today: a causal row always has >=1 unmasked entry. Once padding masks land, a
       fully-masked row gives `softmax([-inf, ...]) = NaN`. Standard fix is
       `torch.finfo(scores.dtype).min`. Do it when C1 lands.
