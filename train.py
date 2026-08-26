@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from torch import Tensor
+from torch import nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
@@ -47,6 +48,7 @@ def train_one_epoch_transformer(
             print(f'  batch {i + 1} loss: {last_loss}')
             running_loss = 0.
     return last_loss
+
 
 def train_transformer(
     model: Transformer,
