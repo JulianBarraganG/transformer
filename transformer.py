@@ -2,8 +2,7 @@ import math
 
 import torch
 import torch.nn.functional as F
-from torch import nn
-from torch import Tensor
+from torch import Tensor, nn
 
 
 class Embedding(nn.Module):

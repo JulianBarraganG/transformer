@@ -5,10 +5,11 @@ build/
 dist/
 wheels/
 *.egg-info
+*.log
 
 # Virtual environments
 .venv
 *.pdf
 
-# Training runs (checkpoints, metrics, tensorboard events)
+# Training runs telemetry data (local)
 runs/
