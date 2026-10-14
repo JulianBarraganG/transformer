@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 class ValRecord:
     step: int
     epoch: int
-    batch_loss: float
+    val_loss: float
     n_tokens: int
     kind: str = "val"
 
@@ -29,6 +29,7 @@ class TrainStepRecord:
 class RunLogger:
     def __init__(self, name: str, config: dict, root: Path = Path("runs")) -> None:
         stamp = datetime.now(tz=ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d_%H%M")
+        self.config = config
         self.run_dir = root / f"{stamp}_{name}"
         (self.run_dir / "checkpoints").mkdir(exist_ok=True, parents=True)
         (self.run_dir / "config.json").write_text(json.dumps(config, indent=2))
