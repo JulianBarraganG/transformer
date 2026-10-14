@@ -16,6 +16,7 @@ class ValRecord:
     n_tokens: int
     kind: str = "val"
 
+
 @dataclass(frozen=True)
 class TrainStepRecord:
     step: int
@@ -25,6 +26,7 @@ class TrainStepRecord:
     grad_norm: float
     lr: float
     kind: str = "train_step"
+
 
 class RunLogger:
     def __init__(self, name: str, config: dict, root: Path = Path("runs")) -> None:

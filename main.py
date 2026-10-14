@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from dates_data import DatesDataset, collate_dates, load_vocab
-from telemetry import RunLogger
+from tracking.tracking import RunLogger
 from train import SeqCrossEntropyLoss, train_transformer
 from transformer import Transformer
 
@@ -44,7 +44,10 @@ if __name__ == "__main__":
     train_ds = DatesDataset(DATA_DIR / "train.jsonl", vocab)
     val_ds = DatesDataset(DATA_DIR / "valid.jsonl", vocab)
     train_loader = DataLoader(
-        train_ds, batch_size=TRAIN_PARAMS["batch_size"], shuffle=True, collate_fn=collate
+        train_ds,
+        batch_size=TRAIN_PARAMS["batch_size"],
+        shuffle=True,
+        collate_fn=collate,
     )
     val_loader = DataLoader(
         val_ds, batch_size=TRAIN_PARAMS["batch_size"], shuffle=False, collate_fn=collate
@@ -70,19 +73,25 @@ if __name__ == "__main__":
     )
     scheduler = LambdaLR(
         optimizer,
-        lambda step: model.d_model**(-0.5) * min(
-            max(step, 1)**-0.5, max(step, 1) * TRAIN_PARAMS["warmup"]**-1.5
-        ),
+        lambda step: model.d_model ** (-0.5)
+        * min(max(step, 1) ** -0.5, max(step, 1) * TRAIN_PARAMS["warmup"] ** -1.5),
     )
 
     # Do the training
     logger.info("Starting training...")
     run_logger = RunLogger(
-        "dates", config={"model": model_params, "train": TRAIN_PARAMS}
+        "dates", config={"model": model_params, "hyper": TRAIN_PARAMS}
     )
     train_transformer(
-        model, train_loader, val_loader, optimizer, scheduler, loss_fn, 
-        vocab.pad_id, epochs=TRAIN_PARAMS["epochs"], run_logger=run_logger,
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        scheduler,
+        loss_fn,
+        vocab.pad_id,
+        epochs=TRAIN_PARAMS["epochs"],
+        run_logger=run_logger,
     )
-    party_pooper = "\U0001F389" # celebratory unicode emoji
+    party_pooper = "\U0001f389"  # celebratory unicode emoji
     logger.info(f"Training finished! {party_pooper}")

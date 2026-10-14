@@ -163,18 +163,25 @@ def main() -> None:
     # Vocabulary over every character the corpus can produce. Built from all
     # splits so the test sets never hit <unk> -- with a 100-year range and
     # 13 formats the character inventory is closed anyway.
-    chars = sorted({c for rows in splits.values() for r in rows for c in r["src"] + r["tgt"]})
+    chars = sorted(
+        {c for rows in splits.values() for r in rows for c in r["src"] + r["tgt"]}
+    )
     stoi = {tok: i for i, tok in enumerate(SPECIALS + chars)}
     (args.out / "vocab.json").write_text(
         json.dumps(
             {
-                "pad_token": PAD, "pad_id": stoi[PAD],
-                "bos_token": BOS, "bos_id": stoi[BOS],
-                "eos_token": EOS, "eos_id": stoi[EOS],
-                "unk_token": UNK, "unk_id": stoi[UNK],
+                "pad_token": PAD,
+                "pad_id": stoi[PAD],
+                "bos_token": BOS,
+                "bos_id": stoi[BOS],
+                "eos_token": EOS,
+                "eos_id": stoi[EOS],
+                "unk_token": UNK,
+                "unk_id": stoi[UNK],
                 "stoi": stoi,
             },
-            indent=2, ensure_ascii=False,
+            indent=2,
+            ensure_ascii=False,
         ),
         encoding="utf-8",
     )

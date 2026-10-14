@@ -6,10 +6,11 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
 from checkpoint import save_checkpoint
-from telemetry import RunLogger, TrainStepRecord, ValRecord
+from tracking.tracking import RunLogger, TrainStepRecord, ValRecord
 from transformer import Transformer
 
 logger = logging.getLogger(__name__)
+
 
 class SeqCrossEntropyLoss(nn.Module):
     def __init__(self, **kwargs) -> None:
@@ -18,6 +19,7 @@ class SeqCrossEntropyLoss(nn.Module):
 
     def forward(self, logits: Tensor, labels: Tensor) -> Tensor:
         return self.ce(logits.reshape(-1, logits.size(-1)), labels.reshape(-1))
+
 
 def train_one_epoch_transformer(
     model: Transformer,
@@ -35,14 +37,14 @@ def train_one_epoch_transformer(
     Returns a tuple of the token-weighted mean loss over the epoch and the
     global step to continue from.
     """
-    loss_sum = 0.
+    loss_sum = 0.0
     token_sum = 0
     device = next(model.parameters()).device
 
     for i, data in enumerate(training_loader):
         # Every data instance is an input + label pair
         source = data[0].to(device)
-        targets = data[1].to(device) # exclude EOS or PAD
+        targets = data[1].to(device)  # exclude EOS or PAD
         dec_in, labels = targets[:, :-1], targets[:, 1:]
 
         # Must zero grads before each batch
@@ -57,11 +59,12 @@ def train_one_epoch_transformer(
 
         # Gather data to be recorded, between backward() and step()
         grad_norm = nn.utils.clip_grad_norm_(
-            model.parameters(), float("inf") # Inf norm -> no clip
+            model.parameters(),
+            float("inf"),  # Inf norm -> no clip
         ).item()
         n_tokens = int((labels != pad_idx).sum().item())
         lr = scheduler.get_last_lr()[0]
-        lr = lr.item() if isinstance(lr, Tensor) else lr # type stuff
+        lr = lr.item() if isinstance(lr, Tensor) else lr  # type stuff
         batch_loss = loss.item()
         run_logger.log(
             TrainStepRecord(step, epoch, batch_loss, n_tokens, grad_norm, lr)
@@ -76,6 +79,7 @@ def train_one_epoch_transformer(
         token_sum += n_tokens
 
     return (loss_sum / token_sum), step
+
 
 @no_grad()
 def _validate_transformer(
@@ -92,7 +96,7 @@ def _validate_transformer(
 
     for data in val_loader:
         source = data[0].to(device)
-        targets = data[1].to(device) # exclude EOS or PAD
+        targets = data[1].to(device)  # exclude EOS or PAD
         dec_in, labels = targets[:, :-1], targets[:, 1:]
 
         outputs = model(source, dec_in)
@@ -106,7 +110,7 @@ def _validate_transformer(
     model.train(True)
 
     return (val_loss_sum / token_sum), token_sum
-    
+
 
 def train_transformer(
     model: Transformer,
@@ -125,23 +129,41 @@ def train_transformer(
     for e in range(epochs):
         model.train(True)
         avg_loss, step = train_one_epoch_transformer(
-            model, training_loader, optimizer, scheduler, loss_fn, pad_idx, e, step,
+            model,
+            training_loader,
+            optimizer,
+            scheduler,
+            loss_fn,
+            pad_idx,
+            e,
+            step,
             run_logger,
         )
 
         logger.info(f"Train loss at epoch {e + 1}: {avg_loss}")
-        val_loss, val_token_sum = _validate_transformer(model, val_loader, loss_fn, pad_idx)
-        run_logger.log(
-            ValRecord(step, e, val_loss, val_token_sum)
+        val_loss, val_token_sum = _validate_transformer(
+            model, val_loader, loss_fn, pad_idx
         )
+        run_logger.log(ValRecord(step, e, val_loss, val_token_sum))
         logger.info(f"Validation loss at epoch {e + 1}: {val_loss}")
 
         save_checkpoint(
-            ckpt_dir / "last.pt", model, optimizer, scheduler, e, step, run_logger.config
+            ckpt_dir / "last.pt",
+            model,
+            optimizer,
+            scheduler,
+            e,
+            step,
+            run_logger.config,
         )
         if val_loss < best_val:
             best_val = val_loss
             save_checkpoint(
-                ckpt_dir / "best.pt", model, optimizer, scheduler, e, step,
+                ckpt_dir / "best.pt",
+                model,
+                optimizer,
+                scheduler,
+                e,
+                step,
                 run_logger.config,
             )

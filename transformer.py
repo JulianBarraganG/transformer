@@ -6,7 +6,9 @@ from torch import Tensor, nn
 
 
 class Embedding(nn.Module):
-    def __init__(self, vocab_size: int, d_model: int, pad_idx: int | None = None) -> None:
+    def __init__(
+        self, vocab_size: int, d_model: int, pad_idx: int | None = None
+    ) -> None:
         super().__init__()
         self.emb_layer = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
         self.d_model = d_model
@@ -16,15 +18,17 @@ class Embedding(nn.Module):
         # TODO: consider different inputs than torch tensors
         return self.emb_layer(X) * math.sqrt(self.d_model)
 
+
 class PositionalEncoding(nn.Module):
     pe: Tensor
+
     def __init__(self, max_seq_len: int, d_model: int) -> None:
         super().__init__()
         self.max_seq_len = max_seq_len
         # Calculate the PE matrix
         pe = torch.empty((max_seq_len, d_model))
-        pos = torch.arange(0, max_seq_len).unsqueeze(1) # shape (max_seq_len, 1)
-        two_i = torch.arange(0, d_model, 2) # shape (d_model/2,)
+        pos = torch.arange(0, max_seq_len).unsqueeze(1)  # shape (max_seq_len, 1)
+        two_i = torch.arange(0, d_model, 2)  # shape (d_model/2,)
         progression_range = 10000
         # exp of log 10000^(-2i / d_model) avoids overflow; div_term.shape is (d_model/2,)
         div_term = torch.exp(-(two_i / d_model) * math.log(progression_range))
@@ -32,10 +36,12 @@ class PositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(pos * div_term[: d_model // 2])
         # the integer div by 2 is a bespoke floor for correct slice in uneven d_model case
 
-        self.register_buffer("pe", pe) # goes to GPU without being model param/trained on
+        self.register_buffer(
+            "pe", pe
+        )  # goes to GPU without being model param/trained on
 
     def forward(self, X: Tensor) -> Tensor:
-        seq_len = X.size(-2) # either (batch, N, dim) or (N, dim)
+        seq_len = X.size(-2)  # either (batch, N, dim) or (N, dim)
         assert seq_len <= self.max_seq_len, (
             f"Sequence too long: {seq_len} > {self.max_seq_len} = max sequence length"
         )
@@ -45,6 +51,7 @@ class PositionalEncoding(nn.Module):
 
 class FeedForward(nn.Module):
     """Position wise feed forward network"""
+
     def __init__(self, d_model: int, d_ff: int) -> None:
         super().__init__()
         self.d_model = d_model
@@ -70,7 +77,7 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.d_k = d_k
         self.d_v = d_v
-        self.h = h # number of heads in multi-head attention
+        self.h = h  # number of heads in multi-head attention
         self.W_O = nn.Linear((self.d_v * h), d_model)
         self.W_Q = nn.Linear(d_model, d_k * h)
         self.W_K = nn.Linear(d_model, d_k * h)
@@ -80,10 +87,12 @@ class MultiHeadAttention(nn.Module):
         self, Q: Tensor, K: Tensor, V: Tensor, mask: Tensor | None = None
     ) -> Tensor:
         """Scaled dot product attention. `mask` is True where attention is forbidden."""
-        assert Q.shape[-1] == K.shape[-1] == self.d_k,(
+        assert Q.shape[-1] == K.shape[-1] == self.d_k, (
             f"Expected Q and K to have last dim {self.d_k} i.e. d_k"
         )
-        assert V.shape[-1] == self.d_v, f"Expected V to have last dim {self.d_v} i.e. d_v"
+        assert V.shape[-1] == self.d_v, (
+            f"Expected V to have last dim {self.d_v} i.e. d_v"
+        )
 
         softmax_input = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if mask is not None:
@@ -101,18 +110,22 @@ class MultiHeadAttention(nn.Module):
         # Calculate h head_i = attention(QW^Q_i,...)
         key_val_source = X if memory is None else memory
         # reshape to (*, h, n, d_k)
-        Q = self.W_Q(X).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2) 
+        Q = self.W_Q(X).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2)
         K = self.W_K(key_val_source).unflatten(-1, (self.h, self.d_k)).transpose(-3, -2)
         V = self.W_V(key_val_source).unflatten(-1, (self.h, self.d_v)).transpose(-3, -2)
-        heads = self.scaled_dot_product_attention(Q, K, V, mask) # heads shape (*, h, n, d_v)
-        cat = heads.transpose(-3, -2).flatten(-2) # merge last 2 axes; shape (*, n, h*d_v)
+        heads = self.scaled_dot_product_attention(
+            Q, K, V, mask
+        )  # heads shape (*, h, n, d_v)
+        cat = heads.transpose(-3, -2).flatten(
+            -2
+        )  # merge last 2 axes; shape (*, n, h*d_v)
 
         return self.W_O(cat)
 
 
 class EncoderLayer(nn.Module):
     def __init__(
-        self, 
+        self,
         h: int,
         d_model: int,
         d_ff: int,
@@ -131,11 +144,11 @@ class EncoderLayer(nn.Module):
         # Sub-layer one (self-attention)
         Z = self.self_attention(X, mask=pad_mask)
         Z = self.dropout(Z) if self.dropout is not None else Z
-        Z = self.layer_norm_self(X + Z) # residual after X
+        Z = self.layer_norm_self(X + Z)  # residual after X
         # Sub-layer two (feed-forward network)
         R = self.ff(Z)
         R = self.dropout(R) if self.dropout is not None else R
-        R = self.layer_norm_ff(Z + R) # residual after Z
+        R = self.layer_norm_ff(Z + R)  # residual after Z
         return R
 
 
@@ -150,7 +163,9 @@ class DecoderLayer(nn.Module):
         p_drop: float | None = 0.1,
     ) -> None:
         super().__init__()
-        self.encdec_attention = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
+        self.encdec_attention = MultiHeadAttention(
+            h=h, d_model=d_model, d_k=d_k, d_v=d_v
+        )
         self.self_attention = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
         self.ff = FeedForward(d_model=d_model, d_ff=d_ff)
         self.layer_norm_encdec = nn.LayerNorm(d_model)
@@ -166,7 +181,7 @@ class DecoderLayer(nn.Module):
         # Sub-layer one (masked self-attention) -- causality lives here
         Z = self.self_attention(X, mask=self_mask)
         Z = self.dropout(Z) if self.dropout is not None else Z
-        Z = self.layer_norm_self(X + Z) # residual after X
+        Z = self.layer_norm_self(X + Z)  # residual after X
         # Sub-layer two (encoder-decoder attention) -- unmasked, decoder sees all of source
         Y = self.encdec_attention(Z, memory=memory, mask=pad_mask)
         Y = self.dropout(Y) if self.dropout is not None else Y
@@ -174,13 +189,14 @@ class DecoderLayer(nn.Module):
         # Sub-layer three (feed-forward network)
         R = self.ff(Y)
         R = self.dropout(R) if self.dropout is not None else R
-        R = self.layer_norm_ff(Y + R) # residual after Z
+        R = self.layer_norm_ff(Y + R)  # residual after Z
 
         return R
 
 
 class Encoder(nn.Module):
     """Stack of N identical encoder layers."""
+
     def __init__(
         self,
         N: int,
@@ -194,7 +210,9 @@ class Encoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList(
             [
-                EncoderLayer(h=h, d_model=d_model, d_ff=d_ff, d_k=d_k, d_v=d_v, p_drop=p_drop)
+                EncoderLayer(
+                    h=h, d_model=d_model, d_ff=d_ff, d_k=d_k, d_v=d_v, p_drop=p_drop
+                )
                 for _ in range(N)
             ]
         )
@@ -207,6 +225,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     """Stack of N identical decoder layers. `memory` is the final encoder output."""
+
     def __init__(
         self,
         N: int,
@@ -220,7 +239,9 @@ class Decoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList(
             [
-                DecoderLayer(h=h, d_model=d_model, d_ff=d_ff, d_k=d_k, d_v=d_v, p_drop=p_drop)
+                DecoderLayer(
+                    h=h, d_model=d_model, d_ff=d_ff, d_k=d_k, d_v=d_v, p_drop=p_drop
+                )
                 for _ in range(N)
             ]
         )
@@ -235,8 +256,9 @@ class Decoder(nn.Module):
 
 class Transformer(nn.Module):
     causal_mask: Tensor
+
     def __init__(
-        self, 
+        self,
         max_seq_len: int,
         vocab_size: int,
         padding_idx: int,
@@ -280,11 +302,12 @@ class Transformer(nn.Module):
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
         # Init shared weight tensor post others
-        nn.init.normal_(self.embedding.emb_layer.weight, mean=0.0, std=self.d_model**-0.5)
+        nn.init.normal_(
+            self.embedding.emb_layer.weight, mean=0.0, std=self.d_model**-0.5
+        )
         # Finally set padding tokens weight zero i.e. no learning
         with torch.no_grad():
             self.embedding.emb_layer.weight[self.padding_idx].zero_()
-
 
     def forward(self, src: Tensor, tgt: Tensor) -> Tensor:
         assert src.dim() == 2, (
@@ -296,10 +319,10 @@ class Transformer(nn.Module):
         # Calculate the combined causal and pad mask
         tgt_len = tgt.shape[-1]
         # Padding mask expect (B,1,1,S) for broadcasting over query/key-val len and heads
-        src_pad_mask = (src == self.padding_idx)[:, None, None, :] # (B,S) -> (B,1,1,S)
-        tgt_pad_mask = (tgt == self.padding_idx)[:, None, None, :] # (B,T) -> (B,1,1,T)
+        src_pad_mask = (src == self.padding_idx)[:, None, None, :]  # (B,S) -> (B,1,1,S)
+        tgt_pad_mask = (tgt == self.padding_idx)[:, None, None, :]  # (B,T) -> (B,1,1,T)
         causal_mask = self.causal_mask[:tgt_len, :tgt_len]
-        self_attn_mask = causal_mask | tgt_pad_mask # cheap guard for left padding
+        self_attn_mask = causal_mask | tgt_pad_mask  # cheap guard for left padding
         # Embed and positionally encode source tensor
         src = self.embedding(src)
         src = self.positional_encoding(src)
@@ -317,4 +340,4 @@ class Transformer(nn.Module):
         # Tied weights from embedding used for output head (transposed)
         tgt = self.output_head(tgt)
 
-        return tgt # Predicted next-token distribution raw logits
+        return tgt  # Predicted next-token distribution raw logits

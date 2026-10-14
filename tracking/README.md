@@ -1,4 +1,4 @@
-# Telemetry
+# Tracking
 
 Decisions for training observability. Local only, no external tracking tools.
 
@@ -21,7 +21,7 @@ runs/<YYYY-MM-DD_HHMM>_<run-name>/
 Written once by `RunLogger`, before training starts.
 
 ```
-{"model": {...}, "train": {...}}
+{"model": {...}, "hyper": {...}}
 ```
 
 - `model`: `Transformer` kwargs, incl. `vocab_size`/`padding_idx` from the vocab
@@ -81,7 +81,7 @@ Not implemented yet.
 
 ## Recording architecture
 
-- Record dataclasses and `RunLogger` live in `telemetry.py`
+- Record dataclasses and `RunLogger` live in `tracking.py`
 - `RunLogger` is passed explicitly into the training functions; it owns the run directory and writes `config.json` and `metrics.jsonl`
 - Training loop produces `TrainStepRecord`s; `_validate_transformer` returns numbers, `train_transformer` logs the `ValRecord`
 - Stdlib `logging` is for human-readable text only

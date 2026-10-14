@@ -3,7 +3,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 PAD, BOS, EOS = 0, 1, 2
-SEQ_START = 3 # sequence range from (3, max)
+SEQ_START = 3  # sequence range from (3, max)
 
 
 class CopyDataset(Dataset):
@@ -25,7 +25,8 @@ class CopyDataset(Dataset):
         lengths = torch.randint(min_len, max_len + 1, (n_rows,), generator=g)
         # Sample above the specials so no "real" token collides with PAD/BOS/EOS
         self.rows = [
-            torch.randint(SEQ_START, vocab_size, (int(n),), generator=g) for n in lengths
+            torch.randint(SEQ_START, vocab_size, (int(n),), generator=g)
+            for n in lengths
         ]
 
     def __len__(self) -> int:
