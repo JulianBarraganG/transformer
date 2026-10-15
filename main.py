@@ -80,7 +80,12 @@ if __name__ == "__main__":
     # Do the training
     logger.info("Starting training...")
     run_logger = RunLogger(
-        "dates", config={"model": model_params, "hyper": TRAIN_PARAMS}
+        "dates",
+        config={
+            "model": model_params,
+            "hyper": TRAIN_PARAMS,
+            "data": {"steps_per_epoch": len(train_loader)},
+        },
     )
     train_transformer(
         model,

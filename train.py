@@ -5,7 +5,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
-from checkpoint import save_checkpoint
+from tracking.checkpoint import save_checkpoint
 from tracking.tracking import RunLogger, TrainStepRecord, ValRecord
 from transformer import Transformer
 
